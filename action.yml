@@ -42,7 +42,7 @@ runs:
         fi
 
         VERSION_PATH=${{ inputs.version != 'latest' && format('download/{0}', inputs.version) || 'latest/download' }}
-        URL="https://github.com/sondr3/actions/releases/${VERSION_PATH}/execuetion_${OS}_${ARCH}.tar.gz"
+        URL="https://github.com/sondr3/execuetion/releases/${VERSION_PATH}/execuetion_${OS}_${ARCH}.tar.gz"
 
         echo "Downloading from: $URL"
         curl -L -o execuetion.tar.gz "$URL"

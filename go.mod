@@ -1,4 +1,4 @@
-module github.com/sondr3/actions
+module github.com/sondr3/execuetion
 
 go 1.26
 

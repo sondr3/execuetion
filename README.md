@@ -16,8 +16,8 @@ and its dependencies are embedded in the binary — consuming repos need no
 # Quickstart
 
 ```sh
-git clone github.com/sondr3/actions
-cd actions
+git clone github.com/sondr3/execuetion
+cd execuetion
 go install .
 ```
 

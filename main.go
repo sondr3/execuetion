@@ -23,7 +23,7 @@ import (
 	"github.com/urfave/cli/v3"
 	"sigs.k8s.io/yaml/kyaml"
 
-	"github.com/sondr3/actions/internal/cuemod"
+	"github.com/sondr3/execuetion/internal/cuemod"
 )
 
 const (
