@@ -13,6 +13,8 @@ corresponding `.yml` files, typed against
 and its dependencies are embedded in the binary — consuming repos need no
 `cue.mod/` directory, no network access, and no CUE toolchain.
 
+**Note:** this is vibe coded slop for personal use.
+
 # Quickstart
 
 ```sh
