@@ -62,10 +62,24 @@ generation and `--check`, since the comparison is byte-based.
 
 ### Shared helpers
 
-The binary ships no helpers, only the schema — but the phantom module gives
-your repo the module name `eons.actions`, so repo-local helper packages work
-with a plain import. Put `package lib` files in `lib/` at the repo root and
-import them as `"eons.actions/lib"` from any workflow.
+The binary ships no helpers, only the schema — but the phantom module (rooted
+at `.github/workflows/`, so the rest of your repo is untouched) is named
+`execuetion.dev`, so repo-local helper packages work with a plain import. Put
+`package lib` files in `.github/workflows/lib/` and import them as
+`"execuetion.dev/lib"` from any workflow.
+
+### Editor support
+
+Generation needs no `cue.mod/` — but your editor does: the CUE language
+server can only resolve imports and autocomplete when a module file exists on
+disk. Run `execuetion init` to write `.github/workflows/cue.mod/module.cue`,
+declaring the module and pinning `cue.dev/x/githubactions` at the version
+vendored into the binary, and commit it. `cue lsp` and editor extensions use
+it (fetching the schema from the Central Registry); generation ignores it
+entirely — the embedded module shadows it through the overlay, so generating
+stays hermetic and offline. Anything beyond `module.cue` in that directory
+(`pkg/`, `gen/`, `usr/`) is rejected, since the loader would merge it with
+the embedded module.
 
 ### Check mode
 

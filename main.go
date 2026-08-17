@@ -19,6 +19,7 @@ import (
 	"cuelang.org/go/cue/cuecontext"
 	"cuelang.org/go/cue/load"
 	cueyaml "cuelang.org/go/encoding/yaml"
+	"cuelang.org/go/mod/modfile"
 	docs "github.com/urfave/cli-docs/v3"
 	"github.com/urfave/cli/v3"
 	"sigs.k8s.io/yaml/kyaml"
@@ -67,9 +68,11 @@ func findRepoRoot(start string) (string, error) {
 }
 
 // buildOverlay maps every embedded .cue file onto its phantom location under
-// repoRoot. Overlaid files shadow on-disk files at the same path, so a real
-// cue.mod in the consuming repo is rejected before this is used.
-func buildOverlay(repoRoot string) (map[string]load.Source, error) {
+// the workflows directory, which acts as the CUE module root — the repo root
+// stays untouched. Overlaid files shadow on-disk files at the same path,
+// which is what keeps generation hermetic when an editor-facing cue.mod
+// (see validateOnDiskCueMod) is present.
+func buildOverlay(wfDir string) (map[string]load.Source, error) {
 	overlay := make(map[string]load.Source)
 	err := fs.WalkDir(cuemod.FS, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -82,7 +85,7 @@ func buildOverlay(repoRoot string) (map[string]load.Source, error) {
 		if err != nil {
 			return err
 		}
-		overlay[filepath.Join(repoRoot, filepath.FromSlash(path))] = load.FromBytes(data)
+		overlay[filepath.Join(wfDir, filepath.FromSlash(path))] = load.FromBytes(data)
 		return nil
 	})
 	if err != nil {
@@ -121,6 +124,98 @@ func outputName(cueFile string) string {
 	return strings.TrimSuffix(filepath.Base(cueFile), ".cue") + ".yml"
 }
 
+// embeddedModule parses the embedded phantom module.cue.
+func embeddedModule() (*modfile.File, error) {
+	data, err := cuemod.FS.ReadFile("cue.mod/module.cue")
+	if err != nil {
+		return nil, err
+	}
+	return modfile.Parse(data, "cue.mod/module.cue")
+}
+
+// validateOnDiskCueMod permits a real cue.mod in the workflows directory as
+// long as it cannot interfere with generation. Such a cue.mod exists purely
+// for editors: the CUE language server needs an on-disk module.cue to
+// resolve imports and autocomplete, while generation shadows it with the
+// embedded one (overlaid files win at the same path) and stays hermetic.
+// The legacy content directories are rejected because the loader would merge
+// them with the embedded vendored tree.
+func validateOnDiskCueMod(wfDir string) error {
+	cueModDir := filepath.Join(wfDir, "cue.mod")
+	if _, err := os.Stat(cueModDir); errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+
+	for _, dir := range []string{"pkg", "gen", "usr"} {
+		if _, err := os.Stat(filepath.Join(cueModDir, dir)); err == nil {
+			return fmt.Errorf("%s exists and would merge with the module embedded in execuetion; an on-disk cue.mod may only contain module.cue (editor support, see 'execuetion init')", filepath.Join(cueModDir, dir))
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(cueModDir, "module.cue"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	onDisk, err := modfile.ParseNonStrict(data, "cue.mod/module.cue")
+	if err != nil {
+		return fmt.Errorf("invalid %s: %w", filepath.Join(cueModDir, "module.cue"), err)
+	}
+	embedded, err := embeddedModule()
+	if err != nil {
+		return err
+	}
+	if onDisk.ModuleRootPath() != embedded.ModuleRootPath() {
+		fmt.Fprintf(os.Stderr, "warning: %s declares module %q, but generation uses %q; editor import resolution will disagree with execuetion (rerun 'execuetion init' to fix)\n",
+			filepath.Join(cueModDir, "module.cue"), onDisk.ModuleRootPath(), embedded.ModuleRootPath())
+	}
+	return nil
+}
+
+// initCueMod writes an editor-facing cue.mod/module.cue into the workflows
+// directory: the embedded module definition plus a registry dependency on
+// the vendored githubactions version, so that cue lsp and editor extensions
+// can resolve imports and autocomplete. Generation never reads it.
+func initCueMod(repoRoot string) error {
+	repoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return err
+	}
+	wfDir := filepath.Join(repoRoot, workflowDir)
+
+	mf, err := embeddedModule()
+	if err != nil {
+		return err
+	}
+	mf.Deps = map[string]*modfile.Dep{
+		"cue.dev/x/githubactions@v0": {
+			Version: cuemod.GithubActionsVersion,
+			Default: true,
+		},
+	}
+	data, err := modfile.Format(mf)
+	if err != nil {
+		return err
+	}
+
+	path := filepath.Join(wfDir, "cue.mod", "module.cue")
+	if existing, err := os.ReadFile(path); err == nil && bytes.Equal(existing, data) {
+		fmt.Printf("%s is up to date\n", path)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("Wrote %s\n", path)
+	return nil
+}
+
 // generate evaluates every .github/workflows/*.cue file in repoRoot. Each
 // file is loaded as its own instance so workflows do not unify with each
 // other. Evaluation errors are collected across all files before returning.
@@ -129,19 +224,20 @@ func generate(repoRoot, format string) ([]Workflow, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, "cue.mod")); err == nil {
-		return nil, fmt.Errorf("%s/cue.mod exists on disk; execuetion brings its own CUE module and cannot run in a repo with one", repoRoot)
+	wfDir := filepath.Join(repoRoot, workflowDir)
+	if err := validateOnDiskCueMod(wfDir); err != nil {
+		return nil, err
 	}
 
-	sources, err := filepath.Glob(filepath.Join(repoRoot, workflowDir, "*.cue"))
+	sources, err := filepath.Glob(filepath.Join(wfDir, "*.cue"))
 	if err != nil {
 		return nil, err
 	}
 	if len(sources) == 0 {
-		return nil, fmt.Errorf("no .cue files found in %s", filepath.Join(repoRoot, workflowDir))
+		return nil, fmt.Errorf("no .cue files found in %s", wfDir)
 	}
 
-	overlay, err := buildOverlay(repoRoot)
+	overlay, err := buildOverlay(wfDir)
 	if err != nil {
 		return nil, err
 	}
@@ -151,15 +247,15 @@ func generate(repoRoot, format string) ([]Workflow, error) {
 	var errs []error
 	for _, src := range sources {
 		cfg := &load.Config{
-			Dir:        repoRoot,
-			ModuleRoot: repoRoot,
+			Dir:        wfDir,
+			ModuleRoot: wfDir,
 			Overlay:    overlay,
 		}
 		rel, err := filepath.Rel(repoRoot, src)
 		if err != nil {
 			return nil, err
 		}
-		insts := load.Instances([]string{"./" + filepath.ToSlash(rel)}, cfg)
+		insts := load.Instances([]string{"./" + filepath.Base(src)}, cfg)
 		if len(insts) != 1 {
 			errs = append(errs, fmt.Errorf("%s: expected 1 instance, got %d", rel, len(insts)))
 			continue
@@ -332,6 +428,32 @@ func main() {
 		Suggest:               true,
 
 		Commands: []*cli.Command{
+			{
+				Name:  "init",
+				Usage: "Write an editor-facing cue.mod/module.cue so cue lsp can resolve imports; generation never reads it",
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:        "repo-root",
+						Aliases:     []string{"r"},
+						Usage:       "Repository root to operate on",
+						DefaultText: "nearest git root above the working directory",
+						Destination: &repoRoot,
+					},
+				},
+				Action: func(ctx context.Context, cmd *cli.Command) error {
+					if repoRoot == "" {
+						root, err := findRepoRoot(".")
+						if err != nil {
+							return cli.Exit(err.Error(), exitEval)
+						}
+						repoRoot = root
+					}
+					if err := initCueMod(repoRoot); err != nil {
+						return cli.Exit(err.Error(), exitEval)
+					}
+					return nil
+				},
+			},
 			{
 				Name:   "man",
 				Hidden: true,

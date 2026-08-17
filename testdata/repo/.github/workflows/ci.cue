@@ -2,7 +2,7 @@ package workflows
 
 import (
 	"cue.dev/x/githubactions"
-	"eons.actions/lib"
+	"execuetion.dev/lib"
 )
 
 githubactions.#Workflow & {

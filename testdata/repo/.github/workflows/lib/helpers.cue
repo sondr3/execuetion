@@ -1,5 +1,5 @@
 // A repo-local helper package: nothing is embedded in the binary, but the
-// phantom module makes this importable as "eons.actions/lib".
+// phantom module makes this importable as "execuetion.dev/lib".
 package lib
 
 import "cue.dev/x/githubactions"

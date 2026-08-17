@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sondr3/execuetion/internal/cuemod"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -115,6 +117,37 @@ func TestGenerateNoWorkflows(t *testing.T) {
 	_, err := generate(t.TempDir(), "kyaml")
 	if err == nil {
 		t.Fatal("expected error for repo without workflow sources")
+	}
+}
+
+func TestInitCueMod(t *testing.T) {
+	root := copyRepo(t, "testdata/repo")
+	moduleCue := filepath.Join(root, workflowDir, "cue.mod", "module.cue")
+	if err := os.Remove(moduleCue); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := initCueMod(root); err != nil {
+		t.Fatalf("initCueMod returned error: %v", err)
+	}
+	content, err := os.ReadFile(moduleCue)
+	if err != nil {
+		t.Fatalf("failed to read written module.cue: %v", err)
+	}
+	for _, want := range []string{`module: "execuetion.dev"`, "cue.dev/x/githubactions@v0", cuemod.GithubActionsVersion} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf("module.cue missing %q:\n%s", want, content)
+		}
+	}
+
+	// Idempotent: a second run leaves the identical file in place.
+	if err := initCueMod(root); err != nil {
+		t.Fatalf("second initCueMod returned error: %v", err)
+	}
+
+	// The editor-facing cue.mod must not interfere with generation.
+	if _, err := generate(root, "kyaml"); err != nil {
+		t.Fatalf("generate with editor cue.mod returned error: %v", err)
 	}
 }
 
