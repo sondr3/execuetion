@@ -1,0 +1,55 @@
+name: execuetion
+author: Sondre Aasemoen
+description: Generate GitHub Actions workflows from CUE
+branding:
+  icon: layers
+  color: blue
+
+inputs:
+  version:
+    description: version to download
+    required: false
+    default: latest
+  args:
+    description: extra arguments to pass to execuetion (e.g. --check)
+    required: false
+    default: "--check"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Download binary
+      shell: bash
+      run: |
+        if [[ "$RUNNER_OS" == "Linux" ]]; then
+          OS="Linux"
+        elif [[ "$RUNNER_OS" == "macOS" ]]; then
+          OS="Darwin"
+        else
+          echo "Unsupported platform: $RUNNER_OS"
+          exit 1
+        fi
+
+        if [[ "$RUNNER_ARCH" == "X64" ]]; then
+          ARCH="x86_64"
+        elif [[ "$RUNNER_ARCH" == "ARM64" ]]; then
+          ARCH="arm64"
+        elif [[ "$RUNNER_ARCH" == "X86" ]]; then
+          ARCH="i386"
+        else
+          echo "Unsupported architecture: $RUNNER_ARCH"
+          exit 1
+        fi
+
+        VERSION_PATH=${{ inputs.version != 'latest' && format('download/{0}', inputs.version) || 'latest/download' }}
+        URL="https://github.com/sondr3/actions/releases/${VERSION_PATH}/execuetion_${OS}_${ARCH}.tar.gz"
+
+        echo "Downloading from: $URL"
+        curl -L -o execuetion.tar.gz "$URL"
+        tar xzf execuetion.tar.gz execuetion
+        sudo mv execuetion /usr/local/bin
+        rm execuetion.tar.gz
+
+    - name: Run execuetion
+      shell: bash
+      run: execuetion ${{ inputs.args }}

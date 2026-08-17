@@ -1,0 +1,9 @@
+[tasks.dev]
+raw_args = true
+run = "go run ."
+
+[tasks.build]
+run = "go build -o execuetion ."
+
+[tasks.test]
+run = "go test -v ./..."
