@@ -31,18 +31,15 @@ the workflow `name:` field can be renamed freely.
 ```cue
 package workflows
 
-import (
-	"cue.dev/x/githubactions"
-	"eons.actions/lib"
-)
+import "cue.dev/x/githubactions"
 
 githubactions.#Workflow & {
 	name: "CI"
 	on: push: branches: ["main"]
-	jobs: build: lib.#Job & {
+	jobs: build: {
+		"runs-on": "ubuntu-latest"
 		steps: [
-			lib.#Checkout,
-			lib.#SetupGo,
+			{uses: "actions/checkout@v7"},
 			{name: "Test", run: "go test ./..."},
 		]
 	}
@@ -65,10 +62,10 @@ generation and `--check`, since the comparison is byte-based.
 
 ### Shared helpers
 
-`eons.actions/lib` is a helper package embedded in the binary (see
-[`internal/cuemod/lib`](internal/cuemod/lib)). Repo-local helpers work too:
-`.cue` files in a `lib/` directory at the repo root join the same package
-through the overlay.
+The binary ships no helpers, only the schema — but the phantom module gives
+your repo the module name `eons.actions`, so repo-local helper packages work
+with a plain import. Put `package lib` files in `lib/` at the repo root and
+import them as `"eons.actions/lib"` from any workflow.
 
 ### Check mode
 

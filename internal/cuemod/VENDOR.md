@@ -1,8 +1,7 @@
 # Vendored CUE dependencies
 
 This directory is embedded into the binary and overlaid onto the consuming
-repo root at load time. `cue.mod/` becomes the phantom module, `lib/` becomes
-the shared helper package (`eons.actions/lib`).
+repo root at load time, where `cue.mod/` becomes the phantom module.
 
 Dependencies are vendored into `cue.mod/pkg/` (the legacy import location,
 still supported for the main module). They must **not** also be listed in

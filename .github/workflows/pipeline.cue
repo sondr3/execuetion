@@ -1,9 +1,6 @@
 package workflows
 
-import (
-	"cue.dev/x/githubactions"
-	"eons.actions/lib"
-)
+import "cue.dev/x/githubactions"
 
 githubactions.#Workflow & {
 	name: "pipeline"
@@ -11,10 +8,14 @@ githubactions.#Workflow & {
 		push: branches: ["main"]
 		pull_request: branches: ["main"]
 	}
-	jobs: pipeline: lib.#Job & {
+	jobs: pipeline: {
+		"runs-on": "ubuntu-latest"
 		steps: [
-			lib.#Checkout,
-			lib.#SetupGo,
+			{uses: "actions/checkout@v7"},
+			{
+				uses: "actions/setup-go@v6"
+				with: "go-version-file": "go.mod"
+			},
 			{
 				name: "Format"
 				run:  "test -z \"$(gofmt -l .)\""

@@ -11,7 +11,8 @@ githubactions.#Workflow & {
 		push: branches: ["main"]
 		pull_request: {}
 	}
-	jobs: build: lib.#Job & {
+	jobs: build: {
+		"runs-on": "ubuntu-latest"
 		steps: [
 			lib.#Checkout,
 			lib.#SetupGo,
