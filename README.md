@@ -1,6 +1,6 @@
 <h1 align="center">execuetion</h1>
 <p align="center">
-    <a href="https://github.com/sondr3/actions/actions"><img alt="GitHub Actions Status" src="https://github.com/sondr3/actions/workflows/pipeline/badge.svg" /></a>
+    <a href="https://github.com/sondr3/execuetion/actions"><img alt="GitHub Actions Status" src="https://github.com/sondr3/execuetion/workflows/pipeline/badge.svg" /></a>
 </p>
 
 <p align="center">
