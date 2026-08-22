@@ -4,9 +4,58 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+// fakeGh puts a stub gh executable on PATH and clears the token env vars.
+func fakeGh(t *testing.T, script string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("fake gh stub is a shell script")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+}
+
+func TestNewGitHubTokenFromGhCLI(t *testing.T) {
+	fakeGh(t, `echo fake-gh-token`)
+	if g := NewGitHub(); g.Token != "fake-gh-token" {
+		t.Errorf("Token = %q, want fake-gh-token", g.Token)
+	}
+}
+
+func TestNewGitHubEnvTokenWins(t *testing.T) {
+	fakeGh(t, `echo fake-gh-token`)
+	t.Setenv("GITHUB_TOKEN", "env-token")
+	if g := NewGitHub(); g.Token != "env-token" {
+		t.Errorf("Token = %q, want env-token", g.Token)
+	}
+}
+
+func TestNewGitHubGhNotLoggedIn(t *testing.T) {
+	fakeGh(t, `exit 1`)
+	if g := NewGitHub(); g.Token != "" {
+		t.Errorf("Token = %q, want anonymous", g.Token)
+	}
+}
+
+func TestNewGitHubNoGh(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	if g := NewGitHub(); g.Token != "" {
+		t.Errorf("Token = %q, want anonymous", g.Token)
+	}
+}
 
 func TestGitHubResolve(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

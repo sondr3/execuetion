@@ -80,8 +80,9 @@ Resolutions are cached globally in `~/.cache/execuetion/pins.json`
 (`$XDG_CACHE_HOME` and `$EXECUETION_CACHE_DIR` are honored), keyed by
 `owner/repo@ref` — the same handful of actions shared across all your repos
 costs one GitHub API request ever. Resolution goes through the GitHub API and
-uses `GITHUB_TOKEN` (or `GH_TOKEN`) when set; anonymous requests are
-rate-limited to 60/hour.
+uses `GITHUB_TOKEN` (or `GH_TOKEN`) when set, falling back to the token a
+locally installed [`gh`](https://cli.github.com) CLI is logged in with
+(`gh auth token`); anonymous requests are rate-limited to 60/hour.
 
 - `--no-pin` skips pinning entirely.
 - `--update-pins` re-resolves every ref encountered and refreshes the cache —

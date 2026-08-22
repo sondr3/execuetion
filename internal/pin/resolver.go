@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"strings"
+	"time"
 )
 
 // A Resolver resolves owner/repo@ref to a full commit SHA.
@@ -26,18 +28,39 @@ type GitHub struct {
 }
 
 // NewGitHub returns a resolver against api.github.com, authenticating with
-// GITHUB_TOKEN (or GH_TOKEN) when set. Anonymous requests work but are
-// rate-limited to 60/hour.
+// GITHUB_TOKEN or GH_TOKEN when set, falling back to the token the gh CLI
+// is logged in with (`gh auth token`) when it is installed. Anonymous
+// requests work but are rate-limited to 60/hour.
 func NewGitHub() *GitHub {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		token = os.Getenv("GH_TOKEN")
+	}
+	if token == "" {
+		token = ghAuthToken()
 	}
 	return &GitHub{
 		BaseURL: "https://api.github.com",
 		Token:   token,
 		Client:  http.DefaultClient,
 	}
+}
+
+// ghAuthToken asks a locally installed gh CLI for its stored token. Any
+// failure (gh not installed, not logged in, slow keychain) degrades to
+// anonymous requests rather than failing the run.
+func ghAuthToken() string {
+	gh, err := exec.LookPath("gh")
+	if err != nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, gh, "auth", "token").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // Resolve fetches the commit SHA that ref points at in owner/repo.
