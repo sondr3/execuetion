@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/yaml/kyaml"
 
 	"github.com/sondr3/execuetion/internal/cuemod"
+	"github.com/sondr3/execuetion/internal/pin"
 )
 
 const (
@@ -376,7 +377,33 @@ func check(repoRoot string, workflows []Workflow, allowHandwritten bool) ([]stri
 	return problems, nil
 }
 
-func run(repoRoot, format string, checkMode, allowHandwritten bool) error {
+// pinWorkflows rewrites action refs in every generated workflow to commit
+// SHAs, resolving through the global pin cache and the GitHub API.
+func pinWorkflows(ctx context.Context, workflows []Workflow, updatePins bool) error {
+	cachePath, err := pin.DefaultPath()
+	if err != nil {
+		return err
+	}
+	pinner := &pin.Pinner{
+		Resolver: pin.NewGitHub(),
+		Cache:    pin.Open(cachePath),
+		Update:   updatePins,
+	}
+	docs := make([][]byte, len(workflows))
+	for i := range workflows {
+		docs[i] = workflows[i].Data
+	}
+	pinned, err := pinner.Pin(ctx, docs)
+	if err != nil {
+		return err
+	}
+	for i := range workflows {
+		workflows[i].Data = pinned[i]
+	}
+	return nil
+}
+
+func run(ctx context.Context, repoRoot, format string, checkMode, allowHandwritten, noPin, updatePins bool) error {
 	if repoRoot == "" {
 		root, err := findRepoRoot(".")
 		if err != nil {
@@ -392,6 +419,12 @@ func run(repoRoot, format string, checkMode, allowHandwritten bool) error {
 	workflows, err := generate(repoRoot, format)
 	if err != nil {
 		return cli.Exit(err.Error(), exitEval)
+	}
+
+	if !noPin {
+		if err := pinWorkflows(ctx, workflows, updatePins); err != nil {
+			return cli.Exit(err.Error(), exitEval)
+		}
 	}
 
 	if checkMode {
@@ -418,6 +451,8 @@ func main() {
 	var format string
 	var checkMode bool
 	var allowHandwritten bool
+	var noPin bool
+	var updatePins bool
 
 	app := &cli.Command{
 		Name:                  "execuetion",
@@ -512,9 +547,19 @@ func main() {
 				Usage:       "Permit workflow files without the generated-code header during --check",
 				Destination: &allowHandwritten,
 			},
+			&cli.BoolFlag{
+				Name:        "no-pin",
+				Usage:       "Skip pinning action refs to commit SHAs",
+				Destination: &noPin,
+			},
+			&cli.BoolFlag{
+				Name:        "update-pins",
+				Usage:       "Re-resolve every action ref, refreshing the pin cache",
+				Destination: &updatePins,
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			return run(repoRoot, format, checkMode, allowHandwritten)
+			return run(ctx, repoRoot, format, checkMode, allowHandwritten, noPin, updatePins)
 		},
 	}
 

@@ -62,6 +62,37 @@ YAML subset that GitHub parses like any other YAML file. Pass `--format yaml`
 to opt into regular block-style YAML instead. Use the same format for
 generation and `--check`, since the comparison is byte-based.
 
+### Action pinning
+
+Generated workflows are pinned by default, [pinact](https://github.com/suzuki-shunsuke/pinact)-style:
+every `uses:` reference to a mutable tag or branch is rewritten to the commit
+SHA it resolves to, with the original ref kept as a trailing comment:
+
+```yaml
+uses: "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8", # v7
+```
+
+Local actions (`./…`), `docker://` images, and refs that are already full
+SHAs are left untouched. Reusable workflow references
+(`owner/repo/.github/workflows/x.yml@v1`) are pinned too.
+
+Resolutions are cached globally in `~/.cache/execuetion/pins.json`
+(`$XDG_CACHE_HOME` and `$EXECUETION_CACHE_DIR` are honored), keyed by
+`owner/repo@ref` — the same handful of actions shared across all your repos
+costs one GitHub API request ever. Resolution goes through the GitHub API and
+uses `GITHUB_TOKEN` (or `GH_TOKEN`) when set; anonymous requests are
+rate-limited to 60/hour.
+
+- `--no-pin` skips pinning entirely.
+- `--update-pins` re-resolves every ref encountered and refreshes the cache —
+  this is how you move to a newer release of an action; cached pins never
+  expire on their own.
+
+Note that `--check` compares the pinned output, so it needs either a warm
+cache or network access (CI runners typically have `GITHUB_TOKEN` available).
+`--check --update-pins` additionally flags workflows as stale when an
+upstream tag has moved since the committed pin — useful as a scheduled audit.
+
 ### Shared helpers
 
 The binary ships no helpers, only the schema — but the phantom module (rooted
