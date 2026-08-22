@@ -34,7 +34,9 @@ func (r Ref) Key() string {
 // and checked for equality in parseLine. A YAML-shaped uses: line inside a
 // `run: |` block scalar would false-positive here; like pinact, we accept
 // that.
-var usesRE = regexp.MustCompile(`^(\s*(?:- +)?['"]?uses['"]?\s*: +)(['"]?)([^\s'",]+)(['"]?)(,?)\s*(?:#\s*(\S*).*)?$`)
+var usesRE = regexp.MustCompile(
+	`^(\s*(?:- +)?['"]?uses['"]?\s*: +)(['"]?)([^\s'",]+)(['"]?)(,?)\s*(?:#\s*(\S*).*)?$`,
+)
 
 var shaRE = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
@@ -100,7 +102,7 @@ func parseUsesLine(line string) (parsedLine, bool) {
 func Refs(data []byte) []Ref {
 	var refs []Ref
 	seen := make(map[string]bool)
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		parsed, ok := parseUsesLine(line)
 		if !ok || seen[parsed.ref.Key()] {
 			continue
@@ -124,7 +126,7 @@ type PinnedRef struct {
 // unverifiable and skipped.
 func PinnedRefs(data []byte) []PinnedRef {
 	var refs []PinnedRef
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		parsed, ok := parseLine(line)
 		if !ok || !shaRE.MatchString(parsed.ref.Ref) || parsed.comment == "" {
 			continue

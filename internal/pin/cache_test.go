@@ -21,7 +21,12 @@ func TestCacheRoundTrip(t *testing.T) {
 	reopened := Open(path)
 	res, ok := reopened.Get("actions/checkout@v7")
 	if !ok || res.SHA != checkoutSHA || res.Version != "v7.0.2" {
-		t.Errorf("reopened cache Get = %+v, %v; want SHA %q and version v7.0.2", res, ok, checkoutSHA)
+		t.Errorf(
+			"reopened cache Get = %+v, %v; want SHA %q and version v7.0.2",
+			res,
+			ok,
+			checkoutSHA,
+		)
 	}
 }
 

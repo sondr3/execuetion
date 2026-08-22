@@ -22,12 +22,11 @@ import (
 	"cuelang.org/go/cue/load"
 	cueyaml "cuelang.org/go/encoding/yaml"
 	"cuelang.org/go/mod/modfile"
+	"github.com/sondr3/execuetion/internal/cuemod"
+	"github.com/sondr3/execuetion/internal/pin"
 	docs "github.com/urfave/cli-docs/v3"
 	"github.com/urfave/cli/v3"
 	"sigs.k8s.io/yaml/kyaml"
-
-	"github.com/sondr3/execuetion/internal/cuemod"
-	"github.com/sondr3/execuetion/internal/pin"
 )
 
 const (
@@ -153,7 +152,10 @@ func validateOnDiskCueMod(wfDir string) error {
 
 	for _, dir := range []string{"pkg", "gen", "usr"} {
 		if _, err := os.Stat(filepath.Join(cueModDir, dir)); err == nil {
-			return fmt.Errorf("%s exists and would merge with the module embedded in execuetion; an on-disk cue.mod may only contain module.cue (editor support, see 'execuetion --init')", filepath.Join(cueModDir, dir))
+			return fmt.Errorf(
+				"%s exists and would merge with the module embedded in execuetion; an on-disk cue.mod may only contain module.cue (editor support, see 'execuetion --init')",
+				filepath.Join(cueModDir, dir),
+			)
 		}
 	}
 
@@ -172,8 +174,16 @@ func validateOnDiskCueMod(wfDir string) error {
 		return err
 	}
 	if onDisk.ModuleRootPath() != embedded.ModuleRootPath() {
-		fmt.Fprintf(os.Stderr, "warning: %s declares module %q, but generation uses %q; editor import resolution will disagree with execuetion (rerun 'execuetion --init' to fix)\n",
-			filepath.Join(cueModDir, "module.cue"), onDisk.ModuleRootPath(), embedded.ModuleRootPath())
+		fmt.Fprintf(
+			os.Stderr,
+			"warning: %s declares module %q, but generation uses %q; editor import resolution will disagree with execuetion (rerun 'execuetion --init' to fix)\n",
+			filepath.Join(
+				cueModDir,
+				"module.cue",
+			),
+			onDisk.ModuleRootPath(),
+			embedded.ModuleRootPath(),
+		)
 	}
 	return nil
 }
@@ -228,7 +238,7 @@ func generate(repoRoot, format string) ([]Workflow, error) {
 		return nil, err
 	}
 	wfDir := filepath.Join(repoRoot, workflowDir)
-	if err := validateOnDiskCueMod(wfDir); err != nil {
+	if err = validateOnDiskCueMod(wfDir); err != nil {
 		return nil, err
 	}
 
@@ -272,7 +282,7 @@ func generate(repoRoot, format string) ([]Workflow, error) {
 			errs = append(errs, fmt.Errorf("%s: %w", rel, v.Err()))
 			continue
 		}
-		if err := v.Validate(cue.Concrete(true), cue.Final()); err != nil {
+		if err = v.Validate(cue.Concrete(true), cue.Final()); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", rel, err))
 			continue
 		}
@@ -369,7 +379,7 @@ func check(repoRoot string, workflows []Workflow, allowHandwritten bool) ([]stri
 		existing, err := os.ReadFile(wf.Output)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			problems = append(problems, fmt.Sprintf("%s: missing", display(wf.Output)))
+			problems = append(problems, display(wf.Output)+": missing")
 		case err != nil:
 			return nil, err
 		case !bytes.Equal(normalize(existing), normalize(wf.Data)):
@@ -393,9 +403,17 @@ func check(repoRoot string, workflows []Workflow, allowHandwritten bool) ([]stri
 			}
 			switch {
 			case isGenerated(existing):
-				problems = append(problems, fmt.Sprintf("%s: generated file has no matching .cue source", display(path)))
+				problems = append(
+					problems,
+					display(path)+": generated file has no matching .cue source",
+				)
 			case !allowHandwritten:
-				problems = append(problems, fmt.Sprintf("%s: hand-written workflow; all workflows must be generated from CUE (or pass --allow-handwritten)", display(path)))
+				problems = append(
+					problems,
+					display(
+						path,
+					)+": hand-written workflow; all workflows must be generated from CUE (or pass --allow-handwritten)",
+				)
 			}
 		}
 	}
@@ -443,7 +461,13 @@ func pinWorkflows(ctx context.Context, pinner *pin.Pinner, workflows []Workflow)
 		if ch.OldVersion != "" || ch.NewVersion != "" {
 			versions = fmt.Sprintf(" (%s → %s)", ch.OldVersion, ch.NewVersion)
 		}
-		fmt.Printf("updated %s: %s → %s%s\n", ch.Key, shortSHA(ch.OldSHA), shortSHA(ch.NewSHA), versions)
+		fmt.Printf(
+			"updated %s: %s → %s%s\n",
+			ch.Key,
+			shortSHA(ch.OldSHA),
+			shortSHA(ch.NewSHA),
+			versions,
+		)
 	}
 	return nil
 }
@@ -530,7 +554,11 @@ func dumpPins() error {
 	return w.Flush()
 }
 
-func run(ctx context.Context, repoRoot, format string, checkMode, allowHandwritten, noPin, updatePins bool) error {
+func run(
+	ctx context.Context,
+	repoRoot, format string,
+	checkMode, allowHandwritten, noPin, updatePins bool,
+) error {
 	var pinner *pin.Pinner
 	if !noPin {
 		p, err := newPinner(updatePins)
@@ -678,7 +706,14 @@ func main() {
 			// There are no subcommands; a positional argument is a mistake
 			// (likely a pre-flag invocation like "execuetion init").
 			if cmd.Args().Len() > 0 {
-				return cli.Exit(fmt.Sprintf("unexpected argument %q (did you mean --%s?)", cmd.Args().First(), cmd.Args().First()), exitEval)
+				return cli.Exit(
+					fmt.Sprintf(
+						"unexpected argument %q (did you mean --%s?)",
+						cmd.Args().First(),
+						cmd.Args().First(),
+					),
+					exitEval,
+				)
 			}
 			switch {
 			case manPage, markdown:
@@ -716,7 +751,7 @@ func main() {
 	}
 
 	if err := app.Run(context.Background(), os.Args); err != nil {
-		if exitErr, ok := err.(cli.ExitCoder); ok {
+		if exitErr, ok := errors.AsType[cli.ExitCoder](err); ok {
 			fmt.Fprintln(os.Stderr, exitErr.Error())
 			os.Exit(exitErr.ExitCode())
 		}

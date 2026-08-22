@@ -52,10 +52,19 @@ func TestGenerateGolden(t *testing.T) {
 				}
 				expected, err := os.ReadFile(golden)
 				if err != nil {
-					t.Fatalf("failed to read golden file %s (run with -update to create): %v", golden, err)
+					t.Fatalf(
+						"failed to read golden file %s (run with -update to create): %v",
+						golden,
+						err,
+					)
 				}
 				if string(wf.Data) != string(expected) {
-					t.Errorf("output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", wf.Source, wf.Data, expected)
+					t.Errorf(
+						"output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s",
+						wf.Source,
+						wf.Data,
+						expected,
+					)
 				}
 			}
 		})
@@ -126,10 +135,19 @@ func TestGeneratePinnedGolden(t *testing.T) {
 				}
 				expected, err := os.ReadFile(golden)
 				if err != nil {
-					t.Fatalf("failed to read golden file %s (run with -update to create): %v", golden, err)
+					t.Fatalf(
+						"failed to read golden file %s (run with -update to create): %v",
+						golden,
+						err,
+					)
 				}
 				if string(wf.Data) != string(expected) {
-					t.Errorf("output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", wf.Source, wf.Data, expected)
+					t.Errorf(
+						"output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s",
+						wf.Source,
+						wf.Data,
+						expected,
+					)
 				}
 			}
 		})
@@ -172,7 +190,7 @@ func TestVerifyPins(t *testing.T) {
 	}
 	evil := strings.Repeat("e", 40)
 	tampered := strings.Replace(string(content), fakeCheckoutSHA, evil, 1)
-	if err := os.WriteFile(ciYml, []byte(tampered), 0o644); err != nil {
+	if err = os.WriteFile(ciYml, []byte(tampered), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -183,7 +201,8 @@ func TestVerifyPins(t *testing.T) {
 	if len(problems) != 1 {
 		t.Fatalf("expected 1 verify problem, got %v", problems)
 	}
-	if !strings.Contains(problems[0], "ci.yml") || !strings.Contains(problems[0], "actions/checkout@v7.7.1") {
+	if !strings.Contains(problems[0], "ci.yml") ||
+		!strings.Contains(problems[0], "actions/checkout@v7.7.1") {
 		t.Errorf("problem should name file and ref: %s", problems[0])
 	}
 }
@@ -192,9 +211,15 @@ func TestVerifyPins(t *testing.T) {
 // comparison never sees.
 func TestVerifyPinsHandwritten(t *testing.T) {
 	root := pinnedRepo(t)
-	handwritten := fmt.Sprintf("name: manual\non: push\njobs:\n  x:\n    steps:\n      - uses: actions/checkout@%s # v7.7.1\n",
-		strings.Repeat("e", 40))
-	if err := os.WriteFile(filepath.Join(root, workflowDir, "manual.yaml"), []byte(handwritten), 0o644); err != nil {
+	handwritten := fmt.Sprintf(
+		"name: manual\non: push\njobs:\n  x:\n    steps:\n      - uses: actions/checkout@%s # v7.7.1\n",
+		strings.Repeat("e", 40),
+	)
+	if err := os.WriteFile(
+		filepath.Join(root, workflowDir, "manual.yaml"),
+		[]byte(handwritten),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -209,9 +234,15 @@ func TestVerifyPinsHandwritten(t *testing.T) {
 
 func TestVerifyPinsUnknownVersion(t *testing.T) {
 	root := pinnedRepo(t)
-	handwritten := fmt.Sprintf("name: manual\non: push\njobs:\n  x:\n    steps:\n      - uses: ghost/missing@%s # v9.9.9\n",
-		strings.Repeat("a", 40))
-	if err := os.WriteFile(filepath.Join(root, workflowDir, "manual.yaml"), []byte(handwritten), 0o644); err != nil {
+	handwritten := fmt.Sprintf(
+		"name: manual\non: push\njobs:\n  x:\n    steps:\n      - uses: ghost/missing@%s # v9.9.9\n",
+		strings.Repeat("a", 40),
+	)
+	if err := os.WriteFile(
+		filepath.Join(root, workflowDir, "manual.yaml"),
+		[]byte(handwritten),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -223,7 +254,8 @@ func TestVerifyPinsUnknownVersion(t *testing.T) {
 
 func TestFirstDiff(t *testing.T) {
 	got := firstDiff([]byte("a\nb\nc"), []byte("a\nX\nc"))
-	if !strings.Contains(got, "line 2") || !strings.Contains(got, `"b"`) || !strings.Contains(got, `"X"`) {
+	if !strings.Contains(got, "line 2") || !strings.Contains(got, `"b"`) ||
+		!strings.Contains(got, `"X"`) {
 		t.Errorf("firstDiff = %q", got)
 	}
 }
@@ -368,7 +400,7 @@ func TestCheck(t *testing.T) {
 		t.Fatalf("expected 2 missing files, got %v", problems)
 	}
 
-	if err := writeWorkflows(workflows); err != nil {
+	if err = writeWorkflows(workflows); err != nil {
 		t.Fatalf("writeWorkflows returned error: %v", err)
 	}
 	problems, err = check(root, workflows, false)
@@ -380,7 +412,7 @@ func TestCheck(t *testing.T) {
 	}
 
 	ciYml := filepath.Join(root, workflowDir, "ci.yml")
-	if err := os.WriteFile(ciYml, []byte(generatedMarker+"\nstale: true\n"), 0o644); err != nil {
+	if err = os.WriteFile(ciYml, []byte(generatedMarker+"\nstale: true\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	problems, err = check(root, workflows, false)
@@ -398,7 +430,7 @@ func TestCheckNormalizesLineEndings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate returned error: %v", err)
 	}
-	if err := writeWorkflows(workflows); err != nil {
+	if err = writeWorkflows(workflows); err != nil {
 		t.Fatalf("writeWorkflows returned error: %v", err)
 	}
 
@@ -409,7 +441,7 @@ func TestCheckNormalizesLineEndings(t *testing.T) {
 		t.Fatal(err)
 	}
 	mangled := strings.ReplaceAll(string(content), "\n", " \r\n")
-	if err := os.WriteFile(ciYml, []byte(mangled), 0o644); err != nil {
+	if err = os.WriteFile(ciYml, []byte(mangled), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -428,12 +460,12 @@ func TestCheckOrphan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate returned error: %v", err)
 	}
-	if err := writeWorkflows(workflows); err != nil {
+	if err = writeWorkflows(workflows); err != nil {
 		t.Fatalf("writeWorkflows returned error: %v", err)
 	}
 
 	orphan := filepath.Join(root, workflowDir, "deleted-source.yml")
-	if err := os.WriteFile(orphan, []byte(generatedMarker+"\nname: orphan\n"), 0o644); err != nil {
+	if err = os.WriteFile(orphan, []byte(generatedMarker+"\nname: orphan\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	problems, err := check(root, workflows, false)
@@ -460,12 +492,12 @@ func TestCheckHandwritten(t *testing.T) {
 	if err != nil {
 		t.Fatalf("generate returned error: %v", err)
 	}
-	if err := writeWorkflows(workflows); err != nil {
+	if err = writeWorkflows(workflows); err != nil {
 		t.Fatalf("writeWorkflows returned error: %v", err)
 	}
 
 	handwritten := filepath.Join(root, workflowDir, "manual.yaml")
-	if err := os.WriteFile(handwritten, []byte("name: manual\non: push\n"), 0o644); err != nil {
+	if err = os.WriteFile(handwritten, []byte("name: manual\non: push\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

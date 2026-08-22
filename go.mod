@@ -1,6 +1,6 @@
 module github.com/sondr3/execuetion
 
-go 1.26
+go 1.27
 
 require (
 	cuelang.org/go v0.17.1

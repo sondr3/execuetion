@@ -48,7 +48,7 @@ func DefaultPath() (string, error) {
 // file is warned about and treated as empty rather than failing the run,
 // since the worst case is a re-resolve.
 func Open(path string) *Cache {
-	c := &Cache{path: path, entries: make(map[string]entry)}
+	c := &Cache{path: path, entries: make(map[string]entry), dirty: false}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return c
@@ -84,7 +84,10 @@ type Entry struct {
 func (c *Cache) All() []Entry {
 	entries := make([]Entry, 0, len(c.entries))
 	for key, e := range c.entries {
-		entries = append(entries, Entry{Key: key, SHA: e.SHA, Version: e.Version, ResolvedAt: e.ResolvedAt})
+		entries = append(
+			entries,
+			Entry{Key: key, SHA: e.SHA, Version: e.Version, ResolvedAt: e.ResolvedAt},
+		)
 	}
 	slices.SortFunc(entries, func(a, b Entry) int { return strings.Compare(a.Key, b.Key) })
 	return entries
@@ -103,7 +106,7 @@ func (c *Cache) Save() error {
 	data = append(data, '\n')
 
 	dir := filepath.Dir(c.path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err = os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("saving pin cache: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, "pins-*.json")
@@ -111,16 +114,16 @@ func (c *Cache) Save() error {
 		return fmt.Errorf("saving pin cache: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmp.Name())
+		_ = tmp.Close()
+		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("saving pin cache: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("saving pin cache: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), c.path); err != nil {
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("saving pin cache: %w", err)
 	}
 	c.dirty = false

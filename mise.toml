@@ -7,3 +7,6 @@ run = "go build -o execuetion ."
 
 [tasks.test]
 run = "go test -v ./..."
+
+[tools]
+golangci-lint = "latest"

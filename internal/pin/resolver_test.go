@@ -148,7 +148,7 @@ func TestGitHubResolveNotFound(t *testing.T) {
 
 func TestGitHubResolveRateLimit(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-RateLimit-Remaining", "0")
+		w.Header().Set("X-Ratelimit-Remaining", "0")
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(`{"message": "API rate limit exceeded"}`))
 	}))
@@ -159,7 +159,8 @@ func TestGitHubResolveRateLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for rate limit")
 	}
-	if !strings.Contains(err.Error(), "rate limit") || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+	if !strings.Contains(err.Error(), "rate limit") ||
+		!strings.Contains(err.Error(), "GITHUB_TOKEN") {
 		t.Errorf("error should mention rate limit and GITHUB_TOKEN: %v", err)
 	}
 }
@@ -203,7 +204,11 @@ func fakeGh(t *testing.T, script string) {
 		t.Skip("fake gh stub is a shell script")
 	}
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\n"+script), 0o755); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dir, "gh"),
+		[]byte("#!/bin/sh\n"+script),
+		0o755,
+	); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)

@@ -1,0 +1,103 @@
+version: "2"
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+linters:
+  enable:
+    - bodyclose
+    - canonicalheader
+    - copyloopvar
+    - durationcheck
+    - errcheck
+    - errname
+    - errorlint
+    - exhaustive
+    - exhaustruct_v5
+    - fatcontext
+    - gocheckcompilerdirectives
+    - gochecknoglobals
+    - gochecknoinits
+    - gochecksumtype
+    - gocritic
+    - gosec
+    - govet
+    - ineffassign
+    - intrange
+    - iotamixing
+    - loggercheck
+    - sloglint
+    - makezero
+    - mirror
+    - modernize
+    - musttag
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - nolintlint
+    - nonamedreturns
+    - perfsprint
+    - predeclared
+    - reassign
+    - recvcheck
+    - revive
+    - rowserrcheck
+    - spancheck
+    - staticcheck
+    - unconvert
+    - usestdlibvars
+
+  settings:
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    errcheck:
+      check-type-assertions: true
+    exhaustruct_v5:
+      # parsedLine{} and friends as not-found sentinel returns are fine.
+      allow-empty-returns: true
+      ignore-patterns:
+        # Third-party option structs where zero values are the documented default.
+        - 'github\.com/urfave/cli/v3\..*'
+        - 'cuelang\.org/go/cue/load\.Config'
+        - 'cuelang\.org/go/mod/modfile\.Dep'
+        # Pinner.Update/Changes are opt-in/output fields.
+        - 'github\.com/sondr3/execuetion/internal/pin\.Pinner'
+    gosec:
+      config:
+        # This tool writes committed source files (workflows, module.cue)
+        # and shared cache dirs — not secrets; normal repo permissions apply.
+        G301: "0755"
+        G306: "0644"
+    gochecksumtype:
+      default-signifies-exhaustive: false
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    sloglint:
+      no-global: "all"
+      context: "scope"
+  exclusions:
+    warn-unused: true
+    presets:
+      - std-error-handling
+      - common-false-positives
+    rules:
+      - path: '_test\.go'
+        linters:
+          - bodyclose
+          - dupl
+          - errcheck
+          - exhaustruct_v5
+          - funlen
+          - gochecknoglobals
+          - goconst
+          - gosec
+          - noctx
+          - wrapcheck

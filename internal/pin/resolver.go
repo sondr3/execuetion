@@ -96,63 +96,67 @@ func (g *GitHub) Resolve(ctx context.Context, owner, repo, ref string) (Resoluti
 	if err != nil {
 		return Resolution{}, err
 	}
-	res := Resolution{SHA: sha}
+	version := ""
 	switch {
 	case fullSemverRE.MatchString(ref):
-		res.Version = ref
+		version = ref
 	case shortTagRE.MatchString(ref):
-		res.Version = g.fullVersion(ctx, owner, repo, ref, sha)
+		version = g.fullVersion(ctx, owner, repo, ref, sha)
 	}
-	return res, nil
+	return Resolution{SHA: sha, Version: version}, nil
 }
 
-// get performs one authenticated API request and returns the response and
-// its body (capped at 1MB).
-func (g *GitHub) get(ctx context.Context, u string) (*http.Response, []byte, error) {
+// get performs one authenticated API request and returns the response
+// status, headers, and body (capped at 1MB). The body is fully read and
+// closed here.
+func (g *GitHub) get(ctx context.Context, u string) (int, http.Header, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, nil, err
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("X-Github-Api-Version", "2022-11-28")
 	if g.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+g.Token)
 	}
 	resp, err := g.Client.Do(req)
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, nil, err
+		return 0, nil, nil, err
 	}
-	return resp, body, nil
+	return resp.StatusCode, resp.Header, body, nil
 }
 
 // commitSHA resolves ref to a full commit SHA.
 func (g *GitHub) commitSHA(ctx context.Context, owner, repo, ref string) (string, error) {
 	u := fmt.Sprintf("%s/repos/%s/%s/commits/%s",
 		g.BaseURL, url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(ref))
-	resp, body, err := g.get(ctx, u)
+	status, header, body, err := g.get(ctx, u)
 	if err != nil {
 		return "", err
 	}
 
-	if resp.StatusCode != http.StatusOK {
+	if status != http.StatusOK {
 		var apiErr struct {
 			Message string `json:"message"`
 		}
 		_ = json.Unmarshal(body, &apiErr)
 		msg := strings.TrimSpace(apiErr.Message)
 		if msg == "" {
-			msg = http.StatusText(resp.StatusCode)
+			msg = http.StatusText(status)
 		}
-		if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests) &&
-			resp.Header.Get("X-RateLimit-Remaining") == "0" {
-			return "", fmt.Errorf("GitHub API rate limit exceeded (set GITHUB_TOKEN to raise it): %s", msg)
+		if (status == http.StatusForbidden || status == http.StatusTooManyRequests) &&
+			header.Get("X-Ratelimit-Remaining") == "0" {
+			return "", fmt.Errorf(
+				"GitHub API rate limit exceeded (set GITHUB_TOKEN to raise it): %s",
+				msg,
+			)
 		}
-		return "", fmt.Errorf("GitHub API returned %d: %s", resp.StatusCode, msg)
+		return "", fmt.Errorf("GitHub API returned %d: %s", status, msg)
 	}
 
 	var commit struct {
@@ -176,8 +180,8 @@ func (g *GitHub) fullVersion(ctx context.Context, owner, repo, ref, sha string) 
 	for page := 1; page <= 10; page++ {
 		u := fmt.Sprintf("%s/repos/%s/%s/git/matching-refs/tags/%s?per_page=100&page=%d",
 			g.BaseURL, url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(ref+"."), page)
-		resp, body, err := g.get(ctx, u)
-		if err != nil || resp.StatusCode != http.StatusOK {
+		status, _, body, err := g.get(ctx, u)
+		if err != nil || status != http.StatusOK {
 			return ""
 		}
 		var refs []struct {
