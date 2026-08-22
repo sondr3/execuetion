@@ -15,7 +15,7 @@
         contents: "write",
       },
       steps: [{
-        uses: "actions/checkout@1111111111111111111111111111111111111111", # v7
+        uses: "actions/checkout@1111111111111111111111111111111111111111", # v7.7.1
       }, {
         name: "Release",
         run: "echo releasing",

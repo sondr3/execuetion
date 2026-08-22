@@ -13,7 +13,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"text/tabwriter"
 
 	"cuelang.org/go/cue"
 	"cuelang.org/go/cue/cuecontext"
@@ -319,6 +321,28 @@ func normalize(b []byte) []byte {
 	return []byte(strings.Join(lines, "\n"))
 }
 
+// firstDiff points at the first line where the committed content diverges
+// from the generated content, so a --check failure in CI logs is
+// self-explanatory.
+func firstDiff(have, want []byte) string {
+	haveLines := strings.Split(string(have), "\n")
+	wantLines := strings.Split(string(want), "\n")
+	for i := 0; i < len(haveLines) || i < len(wantLines); i++ {
+		var h, w string
+		if i < len(haveLines) {
+			h = haveLines[i]
+		}
+		if i < len(wantLines) {
+			w = wantLines[i]
+		}
+		if h != w {
+			return fmt.Sprintf("first difference at line %d: have %q, want %q",
+				i+1, strings.TrimSpace(h), strings.TrimSpace(w))
+		}
+	}
+	return "contents differ"
+}
+
 // isGenerated reports whether a committed file carries the generated marker.
 func isGenerated(b []byte) bool {
 	return bytes.HasPrefix(normalize(b), []byte(generatedMarker))
@@ -349,7 +373,8 @@ func check(repoRoot string, workflows []Workflow, allowHandwritten bool) ([]stri
 		case err != nil:
 			return nil, err
 		case !bytes.Equal(normalize(existing), normalize(wf.Data)):
-			problems = append(problems, fmt.Sprintf("%s: out of date", display(wf.Output)))
+			problems = append(problems, fmt.Sprintf("%s: out of date (%s)",
+				display(wf.Output), firstDiff(normalize(existing), normalize(wf.Data))))
 		}
 	}
 
@@ -377,18 +402,31 @@ func check(repoRoot string, workflows []Workflow, allowHandwritten bool) ([]stri
 	return problems, nil
 }
 
-// pinWorkflows rewrites action refs in every generated workflow to commit
-// SHAs, resolving through the global pin cache and the GitHub API.
-func pinWorkflows(ctx context.Context, workflows []Workflow, updatePins bool) error {
+// newPinner builds the pinner every pinning-related path shares: the
+// global cache plus the GitHub API.
+func newPinner(updatePins bool) (*pin.Pinner, error) {
 	cachePath, err := pin.DefaultPath()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	pinner := &pin.Pinner{
+	return &pin.Pinner{
 		Resolver: pin.NewGitHub(),
 		Cache:    pin.Open(cachePath),
 		Update:   updatePins,
+	}, nil
+}
+
+// shortSHA abbreviates a commit SHA for display.
+func shortSHA(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
 	}
+	return sha
+}
+
+// pinWorkflows rewrites action refs in every generated workflow to commit
+// SHAs and reports any pins that moved during an --update-pins run.
+func pinWorkflows(ctx context.Context, pinner *pin.Pinner, workflows []Workflow) error {
 	docs := make([][]byte, len(workflows))
 	for i := range workflows {
 		docs[i] = workflows[i].Data
@@ -400,10 +438,108 @@ func pinWorkflows(ctx context.Context, workflows []Workflow, updatePins bool) er
 	for i := range workflows {
 		workflows[i].Data = pinned[i]
 	}
+	for _, ch := range pinner.Changes {
+		versions := ""
+		if ch.OldVersion != "" || ch.NewVersion != "" {
+			versions = fmt.Sprintf(" (%s → %s)", ch.OldVersion, ch.NewVersion)
+		}
+		fmt.Printf("updated %s: %s → %s%s\n", ch.Key, shortSHA(ch.OldSHA), shortSHA(ch.NewSHA), versions)
+	}
 	return nil
 }
 
+// verifyPins audits every committed workflow file in the repo: each
+// SHA-pinned uses: line with a version comment is checked against what
+// that version actually resolves to, catching tampered pins and lying
+// comments — in hand-written workflows too. With a warm cache this is
+// offline; resolutions it performs are cached like any other.
+func verifyPins(ctx context.Context, pinner *pin.Pinner, repoRoot string) ([]string, error) {
+	type site struct {
+		file string
+		sha  string
+	}
+	sites := make(map[string][]site)
+	refs := make(map[string]pin.Ref)
+	for _, pattern := range []string{"*.yml", "*.yaml"} {
+		matches, err := filepath.Glob(filepath.Join(repoRoot, workflowDir, pattern))
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range matches {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			display := path
+			if rel, err := filepath.Rel(repoRoot, path); err == nil {
+				display = filepath.ToSlash(rel)
+			}
+			for _, pr := range pin.PinnedRefs(data) {
+				key := pr.Ref.Key()
+				sites[key] = append(sites[key], site{file: display, sha: pr.SHA})
+				refs[key] = pr.Ref
+			}
+		}
+	}
+
+	keys := make([]string, 0, len(refs))
+	for key := range refs {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+
+	var problems []string
+	for _, key := range keys {
+		res, err := pinner.Resolve(ctx, refs[key])
+		if err != nil {
+			return nil, fmt.Errorf("verifying %s: %w", key, err)
+		}
+		for _, s := range sites[key] {
+			if !strings.EqualFold(s.sha, res.SHA) {
+				problems = append(problems, fmt.Sprintf("%s: pinned to %s, but %s resolves to %s",
+					s.file, shortSHA(s.sha), key, shortSHA(res.SHA)))
+			}
+		}
+	}
+	if err := pinner.Cache.Save(); err != nil {
+		return nil, err
+	}
+	return problems, nil
+}
+
+// dumpPins prints the global pin cache.
+func dumpPins() error {
+	cachePath, err := pin.DefaultPath()
+	if err != nil {
+		return err
+	}
+	entries := pin.Open(cachePath).All()
+	if len(entries) == 0 {
+		fmt.Printf("pin cache %s is empty\n", cachePath)
+		return nil
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "REF\tSHA\tVERSION\tRESOLVED")
+	for _, e := range entries {
+		version := e.Version
+		if version == "" {
+			version = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", e.Key, e.SHA, version, e.ResolvedAt.Format("2006-01-02"))
+	}
+	return w.Flush()
+}
+
 func run(ctx context.Context, repoRoot, format string, checkMode, allowHandwritten, noPin, updatePins bool) error {
+	var pinner *pin.Pinner
+	if !noPin {
+		p, err := newPinner(updatePins)
+		if err != nil {
+			return cli.Exit(err.Error(), exitEval)
+		}
+		pinner = p
+	}
+
 	if repoRoot == "" {
 		root, err := findRepoRoot(".")
 		if err != nil {
@@ -421,8 +557,8 @@ func run(ctx context.Context, repoRoot, format string, checkMode, allowHandwritt
 		return cli.Exit(err.Error(), exitEval)
 	}
 
-	if !noPin {
-		if err := pinWorkflows(ctx, workflows, updatePins); err != nil {
+	if pinner != nil {
+		if err := pinWorkflows(ctx, pinner, workflows); err != nil {
 			return cli.Exit(err.Error(), exitEval)
 		}
 	}
@@ -431,6 +567,13 @@ func run(ctx context.Context, repoRoot, format string, checkMode, allowHandwritt
 		problems, err := check(repoRoot, workflows, allowHandwritten)
 		if err != nil {
 			return cli.Exit(err.Error(), exitEval)
+		}
+		if pinner != nil {
+			verifyProblems, err := verifyPins(ctx, pinner, repoRoot)
+			if err != nil {
+				return cli.Exit(err.Error(), exitEval)
+			}
+			problems = append(problems, verifyProblems...)
 		}
 		if len(problems) > 0 {
 			msg := fmt.Sprintf("%d workflow(s) not up to date, rerun execuetion to fix:\n%s",
@@ -453,6 +596,7 @@ func main() {
 	var allowHandwritten bool
 	var noPin bool
 	var updatePins bool
+	var dump bool
 
 	app := &cli.Command{
 		Name:                  "execuetion",
@@ -557,8 +701,19 @@ func main() {
 				Usage:       "Re-resolve every action ref, refreshing the pin cache",
 				Destination: &updatePins,
 			},
+			&cli.BoolFlag{
+				Name:        "dump",
+				Usage:       "Print the global pin cache and exit",
+				Destination: &dump,
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
+			if dump {
+				if err := dumpPins(); err != nil {
+					return cli.Exit(err.Error(), exitEval)
+				}
+				return nil
+			}
 			return run(ctx, repoRoot, format, checkMode, allowHandwritten, noPin, updatePins)
 		},
 	}

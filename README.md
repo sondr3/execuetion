@@ -66,10 +66,12 @@ generation and `--check`, since the comparison is byte-based.
 
 Generated workflows are pinned by default, [pinact](https://github.com/suzuki-shunsuke/pinact)-style:
 every `uses:` reference to a mutable tag or branch is rewritten to the commit
-SHA it resolves to, with the original ref kept as a trailing comment:
+SHA it resolves to, with the concrete release behind the moving tag kept as a
+trailing comment (falling back to the original ref when no release tag points
+at that commit) — the format Renovate and Dependabot understand:
 
 ```yaml
-uses: "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8", # v7
+uses: "actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8", # v7.0.1
 ```
 
 Local actions (`./…`), `docker://` images, and refs that are already full
@@ -87,11 +89,16 @@ locally installed [`gh`](https://cli.github.com) CLI is logged in with
 - `--no-pin` skips pinning entirely.
 - `--update-pins` re-resolves every ref encountered and refreshes the cache —
   this is how you move to a newer release of an action; cached pins never
-  expire on their own.
+  expire on their own. Pins that moved are reported:
+  `updated actions/checkout@v7: 3d3c42e5 → 08c6903c (v7.0.1 → v7.0.2)`.
+- `--dump` prints the global pin cache and exits.
 
-Note that `--check` compares the pinned output, so it needs either a warm
-cache or network access (CI runners typically have `GITHUB_TOKEN` available).
-`--check --update-pins` additionally flags workflows as stale when an
+`--check` compares the pinned output, so it needs either a warm cache or
+network access (CI runners typically have `GITHUB_TOKEN` available), and it
+additionally *verifies* every committed workflow — hand-written ones
+included: any `uses:` line pinned to a SHA with a version comment is checked
+against what that version actually resolves to, catching tampered pins and
+lying comments. `--check --update-pins` also flags workflows as stale when an
 upstream tag has moved since the committed pin — useful as a scheduled audit.
 
 ### Shared helpers

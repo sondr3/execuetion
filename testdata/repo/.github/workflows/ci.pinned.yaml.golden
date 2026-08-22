@@ -9,8 +9,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@1111111111111111111111111111111111111111 # v7
-      - uses: actions/setup-go@2222222222222222222222222222222222222222 # v6
+      - uses: actions/checkout@1111111111111111111111111111111111111111 # v7.7.1
+      - uses: actions/setup-go@2222222222222222222222222222222222222222 # v6.6.0
         with:
           go-version-file: go.mod
       - name: Test

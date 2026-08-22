@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"time"
 )
 
@@ -12,6 +14,7 @@ import (
 // entries never expire — --update-pins is the refresh mechanism.
 type entry struct {
 	SHA        string    `json:"sha"`
+	Version    string    `json:"version,omitempty"`
 	ResolvedAt time.Time `json:"resolved_at"`
 }
 
@@ -57,16 +60,34 @@ func Open(path string) *Cache {
 	return c
 }
 
-// Get returns the cached SHA for key, if any.
-func (c *Cache) Get(key string) (string, bool) {
+// Get returns the cached resolution for key, if any.
+func (c *Cache) Get(key string) (Resolution, bool) {
 	e, ok := c.entries[key]
-	return e.SHA, ok
+	return Resolution{SHA: e.SHA, Version: e.Version}, ok
 }
 
 // Put records a resolution and marks the cache dirty.
-func (c *Cache) Put(key, sha string) {
-	c.entries[key] = entry{SHA: sha, ResolvedAt: time.Now().UTC()}
+func (c *Cache) Put(key string, res Resolution) {
+	c.entries[key] = entry{SHA: res.SHA, Version: res.Version, ResolvedAt: time.Now().UTC()}
 	c.dirty = true
+}
+
+// An Entry is one cached resolution with its key, as exposed by All.
+type Entry struct {
+	Key        string
+	SHA        string
+	Version    string
+	ResolvedAt time.Time
+}
+
+// All returns every cached resolution, sorted by key (--dump).
+func (c *Cache) All() []Entry {
+	entries := make([]Entry, 0, len(c.entries))
+	for key, e := range c.entries {
+		entries = append(entries, Entry{Key: key, SHA: e.SHA, Version: e.Version, ResolvedAt: e.ResolvedAt})
+	}
+	slices.SortFunc(entries, func(a, b Entry) int { return strings.Compare(a.Key, b.Key) })
+	return entries
 }
 
 // Save writes the cache back atomically (temp file + rename in the same

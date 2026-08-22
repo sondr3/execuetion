@@ -63,22 +63,43 @@ func TestGenerateGolden(t *testing.T) {
 }
 
 // fakeResolver implements pin.Resolver from a fixed map, so the pinned
-// golden test never touches the network.
-type fakeResolver map[string]string
+// golden and verify tests never touch the network.
+type fakeResolver map[string]pin.Resolution
 
-func (f fakeResolver) Resolve(_ context.Context, owner, repo, ref string) (string, error) {
-	sha, ok := f[owner+"/"+repo+"@"+ref]
+func (f fakeResolver) Resolve(_ context.Context, owner, repo, ref string) (pin.Resolution, error) {
+	res, ok := f[owner+"/"+repo+"@"+ref]
 	if !ok {
-		return "", fmt.Errorf("no fake pin for %s/%s@%s", owner, repo, ref)
+		return pin.Resolution{}, fmt.Errorf("no fake pin for %s/%s@%s", owner, repo, ref)
 	}
-	return sha, nil
+	return res, nil
+}
+
+const (
+	fakeCheckoutSHA = "1111111111111111111111111111111111111111"
+	fakeSetupGoSHA  = "2222222222222222222222222222222222222222"
+)
+
+// testResolver pins the two actions used by testdata/repo, with full
+// versions so the goldens exercise the version-comment path.
+func testResolver() fakeResolver {
+	return fakeResolver{
+		"actions/checkout@v7": {SHA: fakeCheckoutSHA, Version: "v7.7.1"},
+		"actions/setup-go@v6": {SHA: fakeSetupGoSHA, Version: "v6.6.0"},
+		// Seeded full-version keys are used by verification.
+		"actions/checkout@v7.7.1": {SHA: fakeCheckoutSHA, Version: "v7.7.1"},
+		"actions/setup-go@v6.6.0": {SHA: fakeSetupGoSHA, Version: "v6.6.0"},
+	}
+}
+
+func testPinner(t *testing.T) *pin.Pinner {
+	t.Helper()
+	return &pin.Pinner{
+		Resolver: testResolver(),
+		Cache:    pin.Open(filepath.Join(t.TempDir(), "pins.json")),
+	}
 }
 
 func TestGeneratePinnedGolden(t *testing.T) {
-	resolver := fakeResolver{
-		"actions/checkout@v7": "1111111111111111111111111111111111111111",
-		"actions/setup-go@v6": "2222222222222222222222222222222222222222",
-	}
 	formats := []struct {
 		format string
 		ext    string
@@ -92,23 +113,14 @@ func TestGeneratePinnedGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("generate returned error: %v", err)
 			}
-			pinner := &pin.Pinner{
-				Resolver: resolver,
-				Cache:    pin.Open(filepath.Join(t.TempDir(), "pins.json")),
-			}
-			docs := make([][]byte, len(workflows))
-			for i := range workflows {
-				docs[i] = workflows[i].Data
-			}
-			pinned, err := pinner.Pin(context.Background(), docs)
-			if err != nil {
-				t.Fatalf("Pin returned error: %v", err)
+			if err := pinWorkflows(context.Background(), testPinner(t), workflows); err != nil {
+				t.Fatalf("pinWorkflows returned error: %v", err)
 			}
 
-			for i, wf := range workflows {
+			for _, wf := range workflows {
 				golden := strings.TrimSuffix(wf.Source, ".cue") + f.ext
 				if *update {
-					if err := os.WriteFile(golden, pinned[i], 0o644); err != nil {
+					if err := os.WriteFile(golden, wf.Data, 0o644); err != nil {
 						t.Fatalf("failed to update golden file: %v", err)
 					}
 				}
@@ -116,11 +128,103 @@ func TestGeneratePinnedGolden(t *testing.T) {
 				if err != nil {
 					t.Fatalf("failed to read golden file %s (run with -update to create): %v", golden, err)
 				}
-				if string(pinned[i]) != string(expected) {
-					t.Errorf("output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", wf.Source, pinned[i], expected)
+				if string(wf.Data) != string(expected) {
+					t.Errorf("output mismatch for %s\n--- got ---\n%s\n--- want ---\n%s", wf.Source, wf.Data, expected)
 				}
 			}
 		})
+	}
+}
+
+// pinnedRepo generates, pins, and writes testdata/repo into a temp root.
+func pinnedRepo(t *testing.T) string {
+	t.Helper()
+	root := copyRepo(t, "testdata/repo")
+	workflows, err := generate(root, "kyaml")
+	if err != nil {
+		t.Fatalf("generate returned error: %v", err)
+	}
+	if err := pinWorkflows(context.Background(), testPinner(t), workflows); err != nil {
+		t.Fatalf("pinWorkflows returned error: %v", err)
+	}
+	if err := writeWorkflows(workflows); err != nil {
+		t.Fatalf("writeWorkflows returned error: %v", err)
+	}
+	return root
+}
+
+func TestVerifyPins(t *testing.T) {
+	root := pinnedRepo(t)
+
+	problems, err := verifyPins(context.Background(), testPinner(t), root)
+	if err != nil {
+		t.Fatalf("verifyPins returned error: %v", err)
+	}
+	if len(problems) != 0 {
+		t.Fatalf("expected clean verify, got %v", problems)
+	}
+
+	// Tamper with a pinned SHA; the version comment now lies.
+	ciYml := filepath.Join(root, workflowDir, "ci.yml")
+	content, err := os.ReadFile(ciYml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evil := strings.Repeat("e", 40)
+	tampered := strings.Replace(string(content), fakeCheckoutSHA, evil, 1)
+	if err := os.WriteFile(ciYml, []byte(tampered), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	problems, err = verifyPins(context.Background(), testPinner(t), root)
+	if err != nil {
+		t.Fatalf("verifyPins returned error: %v", err)
+	}
+	if len(problems) != 1 {
+		t.Fatalf("expected 1 verify problem, got %v", problems)
+	}
+	if !strings.Contains(problems[0], "ci.yml") || !strings.Contains(problems[0], "actions/checkout@v7.7.1") {
+		t.Errorf("problem should name file and ref: %s", problems[0])
+	}
+}
+
+// Verification also covers hand-written workflows, which check's byte
+// comparison never sees.
+func TestVerifyPinsHandwritten(t *testing.T) {
+	root := pinnedRepo(t)
+	handwritten := fmt.Sprintf("name: manual\non: push\njobs:\n  x:\n    steps:\n      - uses: actions/checkout@%s # v7.7.1\n",
+		strings.Repeat("e", 40))
+	if err := os.WriteFile(filepath.Join(root, workflowDir, "manual.yaml"), []byte(handwritten), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	problems, err := verifyPins(context.Background(), testPinner(t), root)
+	if err != nil {
+		t.Fatalf("verifyPins returned error: %v", err)
+	}
+	if len(problems) != 1 || !strings.Contains(problems[0], "manual.yaml") {
+		t.Fatalf("expected 1 problem naming manual.yaml, got %v", problems)
+	}
+}
+
+func TestVerifyPinsUnknownVersion(t *testing.T) {
+	root := pinnedRepo(t)
+	handwritten := fmt.Sprintf("name: manual\non: push\njobs:\n  x:\n    steps:\n      - uses: ghost/missing@%s # v9.9.9\n",
+		strings.Repeat("a", 40))
+	if err := os.WriteFile(filepath.Join(root, workflowDir, "manual.yaml"), []byte(handwritten), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := verifyPins(context.Background(), testPinner(t), root)
+	if err == nil || !strings.Contains(err.Error(), "ghost/missing@v9.9.9") {
+		t.Fatalf("expected error naming the unresolvable ref, got %v", err)
+	}
+}
+
+func TestFirstDiff(t *testing.T) {
+	got := firstDiff([]byte("a\nb\nc"), []byte("a\nX\nc"))
+	if !strings.Contains(got, "line 2") || !strings.Contains(got, `"b"`) || !strings.Contains(got, `"X"`) {
+		t.Errorf("firstDiff = %q", got)
 	}
 }
 

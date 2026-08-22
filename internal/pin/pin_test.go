@@ -51,10 +51,11 @@ func TestParseUsesLine(t *testing.T) {
 }
 
 func TestRewrite(t *testing.T) {
-	pins := map[string]string{
-		"actions/checkout@v7": checkoutSHA,
-		"actions/setup-go@v6": setupGoSHA,
-		"octo/repo@v1":        checkoutSHA,
+	pins := map[string]Resolution{
+		"actions/checkout@v7": {SHA: checkoutSHA},
+		"actions/setup-go@v6": {SHA: setupGoSHA},
+		"octo/repo@v1":        {SHA: checkoutSHA},
+		"actions/cache@v4":    {SHA: setupGoSHA, Version: "v4.3.2"},
 	}
 	tests := []struct {
 		name string
@@ -75,6 +76,11 @@ func TestRewrite(t *testing.T) {
 			"reusable workflow keeps full path",
 			`    uses: octo/repo/.github/workflows/ci.yml@v1`,
 			fmt.Sprintf(`    uses: octo/repo/.github/workflows/ci.yml@%s # v1`, checkoutSHA),
+		},
+		{
+			"full version comment when discovered",
+			`      - uses: actions/cache@v4`,
+			fmt.Sprintf(`      - uses: actions/cache@%s # v4.3.2`, setupGoSHA),
 		},
 		{
 			"unknown ref untouched",
@@ -116,7 +122,7 @@ func TestRewritePreservesDocumentStructure(t *testing.T) {
 		`}`,
 		``,
 	}, "\n")
-	got := string(Rewrite([]byte(doc), map[string]string{"actions/checkout@v7": checkoutSHA}))
+	got := string(Rewrite([]byte(doc), map[string]Resolution{"actions/checkout@v7": {SHA: checkoutSHA}}))
 	want := strings.Replace(doc,
 		`uses: "actions/checkout@v7",`,
 		fmt.Sprintf(`uses: "actions/checkout@%s", # v7`, checkoutSHA), 1)
@@ -146,17 +152,17 @@ func TestRefsDedup(t *testing.T) {
 
 // fakeResolver resolves from a fixed map and counts calls.
 type fakeResolver struct {
-	pins  map[string]string
+	pins  map[string]Resolution
 	calls int
 }
 
-func (f *fakeResolver) Resolve(_ context.Context, owner, repo, ref string) (string, error) {
+func (f *fakeResolver) Resolve(_ context.Context, owner, repo, ref string) (Resolution, error) {
 	f.calls++
-	sha, ok := f.pins[owner+"/"+repo+"@"+ref]
+	res, ok := f.pins[owner+"/"+repo+"@"+ref]
 	if !ok {
-		return "", errors.New("not found")
+		return Resolution{}, errors.New("not found")
 	}
-	return sha, nil
+	return res, nil
 }
 
 func testCache(t *testing.T) *Cache {
@@ -165,9 +171,9 @@ func testCache(t *testing.T) *Cache {
 }
 
 func TestPinnerDedupesAcrossDocs(t *testing.T) {
-	resolver := &fakeResolver{pins: map[string]string{
-		"actions/checkout@v7": checkoutSHA,
-		"actions/setup-go@v6": setupGoSHA,
+	resolver := &fakeResolver{pins: map[string]Resolution{
+		"actions/checkout@v7": {SHA: checkoutSHA},
+		"actions/setup-go@v6": {SHA: setupGoSHA},
 	}}
 	p := &Pinner{Resolver: resolver, Cache: testCache(t)}
 	docs := [][]byte{
@@ -188,8 +194,8 @@ func TestPinnerDedupesAcrossDocs(t *testing.T) {
 
 func TestPinnerUsesCache(t *testing.T) {
 	cache := testCache(t)
-	cache.Put("actions/checkout@v7", checkoutSHA)
-	resolver := &fakeResolver{pins: map[string]string{}}
+	cache.Put("actions/checkout@v7", Resolution{SHA: checkoutSHA})
+	resolver := &fakeResolver{pins: map[string]Resolution{}}
 	p := &Pinner{Resolver: resolver, Cache: cache}
 	pinned, err := p.Pin(context.Background(), [][]byte{[]byte(`      - uses: actions/checkout@v7`)})
 	if err != nil {
@@ -204,9 +210,12 @@ func TestPinnerUsesCache(t *testing.T) {
 }
 
 func TestPinnerUpdateIgnoresCache(t *testing.T) {
+	oldSHA := strings.Repeat("0", 40)
 	cache := testCache(t)
-	cache.Put("actions/checkout@v7", strings.Repeat("0", 40))
-	resolver := &fakeResolver{pins: map[string]string{"actions/checkout@v7": checkoutSHA}}
+	cache.Put("actions/checkout@v7", Resolution{SHA: oldSHA, Version: "v7.0.1"})
+	resolver := &fakeResolver{pins: map[string]Resolution{
+		"actions/checkout@v7": {SHA: checkoutSHA, Version: "v7.0.2"},
+	}}
 	p := &Pinner{Resolver: resolver, Cache: cache, Update: true}
 	pinned, err := p.Pin(context.Background(), [][]byte{[]byte(`      - uses: actions/checkout@v7`)})
 	if err != nil {
@@ -218,14 +227,49 @@ func TestPinnerUpdateIgnoresCache(t *testing.T) {
 	if !strings.Contains(string(pinned[0]), checkoutSHA) {
 		t.Errorf("output not re-pinned: %s", pinned[0])
 	}
-	if sha, _ := cache.Get("actions/checkout@v7"); sha != checkoutSHA {
-		t.Errorf("cache not overwritten: %s", sha)
+	if res, _ := cache.Get("actions/checkout@v7"); res.SHA != checkoutSHA {
+		t.Errorf("cache not overwritten: %s", res.SHA)
+	}
+	want := Change{Key: "actions/checkout@v7", OldSHA: oldSHA, NewSHA: checkoutSHA, OldVersion: "v7.0.1", NewVersion: "v7.0.2"}
+	if len(p.Changes) != 1 || p.Changes[0] != want {
+		t.Errorf("Changes = %+v, want [%+v]", p.Changes, want)
+	}
+}
+
+func TestPinnerUpdateUnchangedPinNotReported(t *testing.T) {
+	cache := testCache(t)
+	cache.Put("actions/checkout@v7", Resolution{SHA: checkoutSHA})
+	resolver := &fakeResolver{pins: map[string]Resolution{
+		"actions/checkout@v7": {SHA: checkoutSHA},
+	}}
+	p := &Pinner{Resolver: resolver, Cache: cache, Update: true}
+	if _, err := p.Pin(context.Background(), [][]byte{[]byte(`      - uses: actions/checkout@v7`)}); err != nil {
+		t.Fatalf("Pin returned error: %v", err)
+	}
+	if len(p.Changes) != 0 {
+		t.Errorf("unchanged pin reported as change: %+v", p.Changes)
+	}
+}
+
+func TestPinnerSeedsFullVersionKey(t *testing.T) {
+	cache := testCache(t)
+	resolver := &fakeResolver{pins: map[string]Resolution{
+		"actions/checkout@v7": {SHA: checkoutSHA, Version: "v7.0.2"},
+	}}
+	p := &Pinner{Resolver: resolver, Cache: cache}
+	if _, err := p.Pin(context.Background(), [][]byte{[]byte(`      - uses: actions/checkout@v7`)}); err != nil {
+		t.Fatalf("Pin returned error: %v", err)
+	}
+	// The discovered full version must be cached under its own key so
+	// verifying the generated "# v7.0.2" comment stays offline.
+	if res, ok := cache.Get("actions/checkout@v7.0.2"); !ok || res.SHA != checkoutSHA {
+		t.Errorf("full version key not seeded, got %+v, %v", res, ok)
 	}
 }
 
 func TestPinnerResolutionFailure(t *testing.T) {
 	cachePath := filepath.Join(t.TempDir(), "pins.json")
-	resolver := &fakeResolver{pins: map[string]string{"actions/checkout@v7": checkoutSHA}}
+	resolver := &fakeResolver{pins: map[string]Resolution{"actions/checkout@v7": {SHA: checkoutSHA}}}
 	p := &Pinner{Resolver: resolver, Cache: Open(cachePath)}
 	docs := [][]byte{[]byte(strings.Join([]string{
 		`      - uses: actions/checkout@v7`,
@@ -239,7 +283,27 @@ func TestPinnerResolutionFailure(t *testing.T) {
 		t.Errorf("error does not name the failing ref: %v", err)
 	}
 	// The successful resolution must still be persisted.
-	if sha, ok := Open(cachePath).Get("actions/checkout@v7"); !ok || sha != checkoutSHA {
-		t.Errorf("successful resolution not saved to cache, got %q, %v", sha, ok)
+	if res, ok := Open(cachePath).Get("actions/checkout@v7"); !ok || res.SHA != checkoutSHA {
+		t.Errorf("successful resolution not saved to cache, got %+v, %v", res, ok)
+	}
+}
+
+func TestPinnedRefs(t *testing.T) {
+	doc := strings.Join([]string{
+		fmt.Sprintf(`        uses: "actions/checkout@%s", # v7.0.2`, checkoutSHA),
+		fmt.Sprintf(`      - uses: actions/setup-go@%s # tag=v6.1.0`, setupGoSHA),
+		fmt.Sprintf(`      - uses: actions/cache@%s`, setupGoSHA), // no comment: unverifiable
+		`      - uses: actions/checkout@v7`,                       // not pinned
+		`      - uses: ./local/action`,
+	}, "\n")
+	refs := PinnedRefs([]byte(doc))
+	if len(refs) != 2 {
+		t.Fatalf("got %d pinned refs, want 2: %+v", len(refs), refs)
+	}
+	if refs[0].Ref.Key() != "actions/checkout@v7.0.2" || refs[0].SHA != checkoutSHA {
+		t.Errorf("refs[0] = %+v", refs[0])
+	}
+	if refs[1].Ref.Key() != "actions/setup-go@v6.1.0" || refs[1].SHA != setupGoSHA {
+		t.Errorf("refs[1] = %+v (tag= prefix should be stripped)", refs[1])
 	}
 }
