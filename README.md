@@ -113,7 +113,7 @@ at `.github/workflows/`, so the rest of your repo is untouched) is named
 
 Generation needs no `cue.mod/` — but your editor does: the CUE language
 server can only resolve imports and autocomplete when a module file exists on
-disk. Run `execuetion init` to write `.github/workflows/cue.mod/module.cue`,
+disk. Run `execuetion --init` to write `.github/workflows/cue.mod/module.cue`,
 declaring the module and pinning `cue.dev/x/githubactions` at the version
 vendored into the binary, and commit it. `cue lsp` and editor extensions use
 it (fetching the schema from the Central Registry); generation ignores it

@@ -153,7 +153,7 @@ func validateOnDiskCueMod(wfDir string) error {
 
 	for _, dir := range []string{"pkg", "gen", "usr"} {
 		if _, err := os.Stat(filepath.Join(cueModDir, dir)); err == nil {
-			return fmt.Errorf("%s exists and would merge with the module embedded in execuetion; an on-disk cue.mod may only contain module.cue (editor support, see 'execuetion init')", filepath.Join(cueModDir, dir))
+			return fmt.Errorf("%s exists and would merge with the module embedded in execuetion; an on-disk cue.mod may only contain module.cue (editor support, see 'execuetion --init')", filepath.Join(cueModDir, dir))
 		}
 	}
 
@@ -172,7 +172,7 @@ func validateOnDiskCueMod(wfDir string) error {
 		return err
 	}
 	if onDisk.ModuleRootPath() != embedded.ModuleRootPath() {
-		fmt.Fprintf(os.Stderr, "warning: %s declares module %q, but generation uses %q; editor import resolution will disagree with execuetion (rerun 'execuetion init' to fix)\n",
+		fmt.Fprintf(os.Stderr, "warning: %s declares module %q, but generation uses %q; editor import resolution will disagree with execuetion (rerun 'execuetion --init' to fix)\n",
 			filepath.Join(cueModDir, "module.cue"), onDisk.ModuleRootPath(), embedded.ModuleRootPath())
 	}
 	return nil
@@ -597,6 +597,9 @@ func main() {
 	var noPin bool
 	var updatePins bool
 	var dump bool
+	var initMode bool
+	var manPage bool
+	var markdown bool
 
 	app := &cli.Command{
 		Name:                  "execuetion",
@@ -604,60 +607,9 @@ func main() {
 		Description:           "execuetion evaluates .github/workflows/*.cue against the embedded CUE module and writes the corresponding .yml files next to the sources",
 		Version:               "0.1.0",
 		EnableShellCompletion: true,
+		HideHelpCommand:       true,
 		Suggest:               true,
 
-		Commands: []*cli.Command{
-			{
-				Name:  "init",
-				Usage: "Write an editor-facing cue.mod/module.cue so cue lsp can resolve imports; generation never reads it",
-				Flags: []cli.Flag{
-					&cli.StringFlag{
-						Name:        "repo-root",
-						Aliases:     []string{"r"},
-						Usage:       "Repository root to operate on",
-						DefaultText: "nearest git root above the working directory",
-						Destination: &repoRoot,
-					},
-				},
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					if repoRoot == "" {
-						root, err := findRepoRoot(".")
-						if err != nil {
-							return cli.Exit(err.Error(), exitEval)
-						}
-						repoRoot = root
-					}
-					if err := initCueMod(repoRoot); err != nil {
-						return cli.Exit(err.Error(), exitEval)
-					}
-					return nil
-				},
-			},
-			{
-				Name:   "man",
-				Hidden: true,
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					man, err := docs.ToMan(cmd.Root())
-					if err != nil {
-						return err
-					}
-					fmt.Println(man)
-					return nil
-				},
-			},
-			{
-				Name:   "markdown",
-				Hidden: true,
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					man, err := docs.ToMarkdown(cmd.Root())
-					if err != nil {
-						return err
-					}
-					fmt.Println(man)
-					return nil
-				},
-			},
-		},
 		Flags: []cli.Flag{
 			&cli.StringFlag{
 				Name:        "repo-root",
@@ -706,15 +658,60 @@ func main() {
 				Usage:       "Print the global pin cache and exit",
 				Destination: &dump,
 			},
+			&cli.BoolFlag{
+				Name:        "init",
+				Usage:       "Write an editor-facing cue.mod/module.cue so cue lsp can resolve imports; generation never reads it",
+				Destination: &initMode,
+			},
+			&cli.BoolFlag{
+				Name:        "man",
+				Hidden:      true,
+				Destination: &manPage,
+			},
+			&cli.BoolFlag{
+				Name:        "markdown",
+				Hidden:      true,
+				Destination: &markdown,
+			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			if dump {
+			// There are no subcommands; a positional argument is a mistake
+			// (likely a pre-flag invocation like "execuetion init").
+			if cmd.Args().Len() > 0 {
+				return cli.Exit(fmt.Sprintf("unexpected argument %q (did you mean --%s?)", cmd.Args().First(), cmd.Args().First()), exitEval)
+			}
+			switch {
+			case manPage, markdown:
+				render := docs.ToMan
+				if markdown {
+					render = docs.ToMarkdown
+				}
+				page, err := render(cmd.Root())
+				if err != nil {
+					return err
+				}
+				fmt.Println(page)
+				return nil
+			case dump:
 				if err := dumpPins(); err != nil {
 					return cli.Exit(err.Error(), exitEval)
 				}
 				return nil
+			case initMode:
+				if repoRoot == "" {
+					root, err := findRepoRoot(".")
+					if err != nil {
+						return cli.Exit(err.Error(), exitEval)
+					}
+					repoRoot = root
+				}
+				if err := initCueMod(repoRoot); err != nil {
+					return cli.Exit(err.Error(), exitEval)
+				}
+				return nil
+			default:
+				return run(ctx, repoRoot, format, checkMode, allowHandwritten, noPin, updatePins)
 			}
-			return run(ctx, repoRoot, format, checkMode, allowHandwritten, noPin, updatePins)
 		},
 	}
 
