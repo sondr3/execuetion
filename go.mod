@@ -4,8 +4,8 @@ go 1.27
 
 require (
 	cuelang.org/go v0.17.1
-	github.com/urfave/cli-docs/v3 v3.1.0
-	github.com/urfave/cli/v3 v3.12.0
+	github.com/urfave/cli-docs/v3 v3.2.0
+	github.com/urfave/cli/v3 v3.14.0
 	sigs.k8s.io/yaml v1.6.0
 )
 
